@@ -24,11 +24,11 @@ import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import java.io.IOException;
 import java.io.StringReader;
-import org.reactivestreams.Publisher;
-import org.reactivestreams.tck.PublisherVerification;
+import java.util.concurrent.Flow;
 import org.reactivestreams.tck.TestEnvironment;
+import org.reactivestreams.tck.flow.FlowPublisherVerification;
 
-public class ObjectNodePublisherVerificationTest extends PublisherVerification<ObjectNode> {
+public class ObjectNodePublisherVerificationTest extends FlowPublisherVerification<ObjectNode> {
 
   private final ObjectMapper objectMapper =
       new ObjectMapper()
@@ -43,10 +43,10 @@ public class ObjectNodePublisherVerificationTest extends PublisherVerification<O
   }
 
   @Override
-  public Publisher<ObjectNode> createPublisher(long l) {
+  public Flow.Publisher<ObjectNode> createFlowPublisher(long l) {
     try {
       if (l == 0) {
-        return new ObjectNodePublisher(new StringReader("{}"));
+        return new ObjectNodePublisher<>(new StringReader("{}"));
       }
       final ObjectNode json =
           (ObjectNode)
@@ -70,7 +70,7 @@ public class ObjectNodePublisherVerificationTest extends PublisherVerification<O
   }
 
   @Override
-  public Publisher<ObjectNode> createFailedPublisher() {
+  public Flow.Publisher<ObjectNode> createFailedFlowPublisher() {
     try {
       return new ObjectNodePublisher(
           getClass().getResourceAsStream("/object-node-publisher/ThrowError.json"));
