@@ -61,7 +61,6 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <openepcis.github.version>1.0.0-SNAPSHOT</openepcis.github.version>
     </properties>
 
     <dependencies>
