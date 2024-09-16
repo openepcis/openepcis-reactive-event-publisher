@@ -1,0 +1,124 @@
+{
+  "@context": [
+    "https://ref.gs1.org/standards/epcis/2.0.0/epcis-context.jsonld",
+    {
+      "example": "http://ns.example.com/epcis/"
+    }
+  ],
+  "type": "EPCISQueryDocument",
+  "schemaVersion": "2.0",
+  "creationDate": "2024-09-04T11:46:00.48Z",
+  "epcisBody": {
+    "queryResults": {
+      "queryName": "ObjectEvents",
+      "resultsBody": {
+        "eventList": [
+          {
+            "type": "ObjectEvent",
+            "eventTime": "2005-04-03T20:33:31.116Z",
+            "recordTime": "2024-08-15T13:43:27.545Z",
+            "eventTimeZoneOffset": "-06:00",
+            "eventID": "urn:uuid:8f93dd62-f7d5-4033-887a-e81e7596a988",
+            "epcList": [
+              "urn:epc:id:sgtin:0614141.107346.2017",
+              "urn:epc:id:sgtin:0614141.107346.2018"
+            ],
+            "action": "OBSERVE",
+            "bizStep": "shipping",
+            "disposition": "in_transit",
+            "readPoint": {
+              "id": "urn:epc:id:sgln:0614141.07346.123432"
+            },
+            "bizTransactionList": [
+              {
+                "type": "po",
+                "bizTransaction": "http://transaction.acme.com/po/12345678"
+              }
+            ]
+          },
+          {
+            "type": "ObjectEvent",
+            "eventTime": "2005-04-03T20:33:31.116Z",
+            "recordTime": "2024-08-15T13:45:54.664Z",
+            "eventTimeZoneOffset": "-06:00",
+            "eventID": "urn:uuid:8de08431-99d4-4e91-9c57-e28736a0de4f",
+            "epcList": [
+              "urn:epc:id:sgtin:0614141.107346.2017",
+              "urn:epc:id:sgtin:0614141.107346.2018"
+            ],
+            "action": "DELETE",
+            "bizStep": "shipping",
+            "disposition": "in_transit",
+            "readPoint": {
+              "id": "urn:epc:id:sgln:0614141.07346.123432"
+            },
+            "bizTransactionList": [
+              {
+                "type": "po",
+                "bizTransaction": "http://transaction.acme.com/po/12345678"
+              }
+            ]
+          },
+          {
+            "type": "ObjectEvent",
+            "eventTime": "2005-04-04T20:33:31.116Z",
+            "recordTime": "2024-08-15T13:43:27.544Z",
+            "eventTimeZoneOffset": "-06:00",
+            "eventID": "urn:uuid:c3a4baf6-9dc8-4705-b942-a4beb32dbe7e",
+            "epcList": [
+              "urn:epc:id:sgtin:0614141.107346.2018"
+            ],
+            "action": "OBSERVE",
+            "bizStep": "receiving",
+            "disposition": "in_progress",
+            "readPoint": {
+              "id": "urn:epc:id:sgln:0012345.11111.400"
+            },
+            "bizLocation": {
+              "id": "urn:epc:id:sgln:0012345.11111.0"
+            },
+            "bizTransactionList": [
+              {
+                "type": "po",
+                "bizTransaction": "http://transaction.acme.com/po/12345678"
+              },
+              {
+                "type": "desadv",
+                "bizTransaction": "urn:epcglobal:cbv:bt:0614141073467:11522"
+              }
+            ],
+            "example:myField": "Example of a vendor/user extension"
+          },
+          {
+            "type": "ObjectEvent",
+            "eventTime": "2022-04-13T12:35:29.017Z",
+            "recordTime": "2024-08-12T12:28:02.083Z",
+            "eventTimeZoneOffset": "+02:00",
+            "eventID": "urn:uuid:2e859900-677e-4d74-89a9-6605e0e67d40",
+            "action": "ADD",
+            "bizStep": "commissioning",
+            "readPoint": {
+              "id": "urn:epc:id:sgln:479602638.000.0"
+            },
+            "bizLocation": {
+              "id": "urn:epc:id:sgln:479602638.000.0"
+            },
+            "bizTransactionList": [
+              {
+                "type": "po",
+                "bizTransaction": "http://transaction.acme.com/po/12345679"
+              }
+            ],
+            "quantityList": [
+              {
+                "epcClass": "urn:epc:class:lgtin:479602638.0024.018test-02",
+                "quantity": 29,
+                "uom": "KGM"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}
