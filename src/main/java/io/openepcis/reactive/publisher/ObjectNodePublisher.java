@@ -23,6 +23,7 @@ import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import java.io.IOException;
@@ -35,12 +36,15 @@ import java.util.concurrent.Flow.Publisher;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+
+import io.openepcis.reactive.publisher.util.JsonNodeDupeFieldHandlingDeserializer;
 import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 public class ObjectNodePublisher<T extends ObjectNode> implements Publisher<T> {
   private static final ObjectMapper mapper =
-      new ObjectMapper().registerModule(new JavaTimeModule());
+      new ObjectMapper().registerModule(new JavaTimeModule())
+              .registerModule(new SimpleModule().addDeserializer(JsonNode.class, new JsonNodeDupeFieldHandlingDeserializer()));
   private static final JsonFactory jsonFactory = new JsonFactory();
   private final ObjectNode header = mapper.createObjectNode();
   private final JsonParser jsonParser;
