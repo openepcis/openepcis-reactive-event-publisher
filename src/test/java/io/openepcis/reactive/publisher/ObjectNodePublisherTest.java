@@ -56,8 +56,8 @@ public class ObjectNodePublisherTest {
   @Test
   public void testQueryDocument() throws IOException {
     final ObjectNodePublisher<ObjectNode> publisher =
-            new ObjectNodePublisher<>(
-                    getClass().getResourceAsStream("/object-node-publisher/QueryDocument.json"));
+        new ObjectNodePublisher<>(
+            getClass().getResourceAsStream("/object-node-publisher/QueryDocument.json"));
     final var result = Multi.createFrom().publisher(publisher).subscribe().asStream().toList();
     assertNotNull(result);
     assertEquals(5, result.size());
