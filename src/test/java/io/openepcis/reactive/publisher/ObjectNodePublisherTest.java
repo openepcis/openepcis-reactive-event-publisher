@@ -15,11 +15,12 @@
  */
 package io.openepcis.reactive.publisher;
 
-import static org.junit.Assert.*;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.openepcis.constants.EPCIS;
 import io.smallrye.mutiny.Multi;
+import org.junit.jupiter.api.Test;
+
 import java.io.IOException;
 import java.io.StringReader;
 import java.util.ArrayList;
@@ -27,8 +28,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
-import org.junit.Assert;
-import org.junit.Test;
+
+import static org.junit.jupiter.api.Assertions.*;
 
 public class ObjectNodePublisherTest {
 
@@ -157,7 +158,7 @@ public class ObjectNodePublisherTest {
       Thread.yield();
     }
     assertEquals(2, resultsIgnoreAfterFirst.size());
-    Assert.assertEquals(
+    assertEquals(
         EPCIS.EPCIS_DOCUMENT,
         resultsIgnoreAfterFirst.get(resultsIgnoreAfterFirst.size() - 1).get(EPCIS.TYPE).asText());
   }
