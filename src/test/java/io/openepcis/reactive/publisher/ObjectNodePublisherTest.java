@@ -109,11 +109,11 @@ public class ObjectNodePublisherTest {
 
   private void validateEarlyEventList(final String jsonUrl, final int expected) throws IOException {
     final ObjectNodePublisher<ObjectNode> publisher =
-        new ObjectNodePublisher<>(getClass().getResourceAsStream(jsonUrl));
+        new ObjectNodePublisher<>(getClass().getResourceAsStream(jsonUrl), () -> getClass().getResourceAsStream(jsonUrl));
     final var result = Multi.createFrom().publisher(publisher).subscribe().asStream().toList();
     assertNotNull(result);
     assertEquals(expected, result.size());
-    assertEquals(EPCIS.EPCIS_DOCUMENT, result.get(result.size() - 1).get(EPCIS.TYPE).asText());
+    assertEquals(EPCIS.EPCIS_DOCUMENT, result.get(0).get(EPCIS.TYPE).asText());
   }
 
   @Test
@@ -157,7 +157,7 @@ public class ObjectNodePublisherTest {
     while (running.get()) {
       Thread.yield();
     }
-    assertEquals(2, resultsIgnoreAfterFirst.size());
+    assertEquals(1, resultsIgnoreAfterFirst.size());
     assertEquals(
         EPCIS.EPCIS_DOCUMENT,
         resultsIgnoreAfterFirst.get(resultsIgnoreAfterFirst.size() - 1).get(EPCIS.TYPE).asText());

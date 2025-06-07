@@ -51,7 +51,7 @@ public class ObjectNodePublisherVerificationTest extends FlowPublisherVerificati
       final ObjectNode json =
           (ObjectNode)
               objectMapper.readTree(
-                  getClass().getResourceAsStream("/object-node-publisher/ThreeEvents.json"));
+                  getClass().getResourceAsStream("/object-node-publisher/ThreeEvents-earlyEventList-contextAtEnd.json"));
       final ArrayNode eventList = (ArrayNode) json.get("epcisBody").get("eventList");
       // eventList.size() + 1
       // document node also has to be considered
@@ -63,7 +63,7 @@ public class ObjectNodePublisherVerificationTest extends FlowPublisherVerificati
         eventList.add(eventList.get(0).deepCopy());
       }
       final String doc = objectMapper.writeValueAsString(json);
-      return new ObjectNodePublisher(new StringReader(doc));
+      return new ObjectNodePublisher(new StringReader(doc), () -> new StringReader(doc));
     } catch (IOException e) {
       throw new RuntimeException(e);
     }
