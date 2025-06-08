@@ -23,6 +23,7 @@ import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.NullNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import java.io.IOException;
@@ -154,7 +155,8 @@ public class ObjectNodePublisher<T extends ObjectNode> implements Publisher<T> {
           return Optional.empty();
         } else if (fieldName != null && !fieldName.equals(EPCIS_BODY_IN_CAMEL_CASE)
                 && !fieldName.equals(QUERY_RESULTS_IN_CAMEL_CASE)
-                && !fieldName.equals(RESULTS_BODY_IN_CAMEL_CASE)) {
+                && !fieldName.equals(RESULTS_BODY_IN_CAMEL_CASE)
+                && !headerSent.get()) {
           final JsonNode o = jsonParser.readValueAsTree();
           if (o != null) {
             header.set(fieldName, o);
@@ -384,9 +386,18 @@ public class ObjectNodePublisher<T extends ObjectNode> implements Publisher<T> {
      */
     private long readEventList(final long requested) throws IOException {
       if (!inEventList.get() || requested == 0) return 0;
-      while (isEventListIgnored() && isTokenAvailable()) {
-        if (token == JsonToken.END_ARRAY) return 0;
-        token = jsonParser.nextToken();
+      if (isEventListIgnored() && isTokenAvailable()) {
+        int array = 0;
+        while (isEventListIgnored() && isTokenAvailable()) {
+          if (token == JsonToken.START_ARRAY) {
+            array++;
+          }
+          if (array == 0 && token == JsonToken.END_ARRAY) return 0;
+          if (token == JsonToken.END_ARRAY) {
+            array--;
+          }
+          token = jsonParser.nextToken();
+        }
       }
       long l = 0;
       while (!isEventListIgnored() && isTokenAvailable() && token == JsonToken.START_OBJECT && l < requested) {
@@ -415,6 +426,11 @@ public class ObjectNodePublisher<T extends ObjectNode> implements Publisher<T> {
       if (requested > 0 && !headerSent.get()
               && ((!isTokenAvailable() && ObjectNodeUtil.isValidEPCISDocumentNode(header))
               || (isTokenAvailable() && nodeCount.get() == 0 && ObjectNodeUtil.isValidEPCISDocumentNode(header)))) {
+        // move epcisBody to the end
+        if (header.has(EPCIS_BODY_IN_CAMEL_CASE)) {
+          header.remove(EPCIS_BODY_IN_CAMEL_CASE);
+          header.set(EPCIS_BODY_IN_CAMEL_CASE, NullNode.getInstance());
+        }
         headerSent.set(true);
         subscriber.get().onNext((T) header);
         return 1;
