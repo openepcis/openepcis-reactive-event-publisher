@@ -119,7 +119,7 @@
     <repositories>
         <repository>
             <id>sonatype-staging</id>
-            <url>https://s01.oss.sonatype.org/content/repositories/snapshots</url>
+            <url>https://ossrh-staging-api.central.sonatype.com/content/repositories/snapshots</url>
             <snapshots>
                 <enabled>true</enabled>
                 <updatePolicy>always</updatePolicy>
