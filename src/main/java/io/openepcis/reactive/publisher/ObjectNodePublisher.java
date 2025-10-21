@@ -21,11 +21,14 @@ import static io.openepcis.constants.EPCIS.RESULTS_BODY_IN_CAMEL_CASE;
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
+import com.fasterxml.jackson.core.util.JsonRecyclerPools;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.NullNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import java.io.BufferedInputStream;
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.Reader;
@@ -47,8 +50,16 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 public class ObjectNodePublisher<T extends ObjectNode> implements Publisher<T> {
+  /** Default buffer size for InputStream/Reader buffering (64KB - optimal for most filesystems) */
+  private static final int DEFAULT_BUFFER_SIZE = 65536;
+
   private static final ObjectMapper mapper = new ObjectMapper().registerModule(new JavaTimeModule());
-  private static final JsonFactory jsonFactory = new JsonFactory();
+
+  /** Optimized JsonFactory with thread-local buffer recycling for reduced allocations */
+  private static final JsonFactory jsonFactory = JsonFactory.builder()
+      .recyclerPool(JsonRecyclerPools.threadLocalPool())
+      .build();
+
   private final ObjectNode header = mapper.createObjectNode();
   private JsonParser jsonParser;
   private final AtomicBoolean headerSent = new AtomicBoolean(false);
@@ -60,22 +71,30 @@ public class ObjectNodePublisher<T extends ObjectNode> implements Publisher<T> {
   final Callable<InputStream> retryInputStream;
   final Callable<Reader> retryReader;
 
+  // Spillover support (disabled by default for backward compatibility)
+  private final PublisherConfig config;
+  private final EventRateMonitor rateMonitor;    // null if spillover disabled
+  private SpilloverManager spilloverManager;      // null if spillover disabled or not triggered
+  private SpillableInputStream spillableStream;   // null if spillover disabled or using Reader
+
   /**
    * Constructs an ObjectNodePublisher with an InputStream and retry support.
+   * Automatically buffers the InputStream for optimal performance on large files.
+   *
+   * <p><strong>Spillover: DISABLED</strong> (default, backward compatible)
    *
    * @param in    the primary InputStream for parsing
    * @param retry the retryable InputStream callable for second pass
    * @throws IOException if JSON parser cannot be initialized
    */
   public ObjectNodePublisher(final InputStream in, final Callable<InputStream> retry) throws IOException {
-    this.jsonParser = jsonFactory.createParser(in);
-    this.jsonParser.setCodec(mapper);
-    this.retryInputStream = retry;
-    this.retryReader = null;
+    this(in, retry, new PublisherConfig());  // Default config = spillover disabled
   }
 
   /**
    * Constructs an ObjectNodePublisher with a one-shot InputStream.
+   *
+   * <p><strong>Spillover: DISABLED</strong> (default, backward compatible)
    *
    * @param in InputStream for reading the JSON content
    * @throws IOException if parser initialization fails
@@ -85,27 +104,196 @@ public class ObjectNodePublisher<T extends ObjectNode> implements Publisher<T> {
   }
 
   /**
+   * Constructs an ObjectNodePublisher with an InputStream, retry support, and spillover threshold.
+   *
+   * <p><strong>NEW - Approach #1: Simple threshold parameter</strong>
+   *
+   * <p>This constructor enables spillover when the subscriber consumption rate drops below the
+   * specified threshold. Set to -1 to disable spillover (same as default constructors).
+   *
+   * @param in    the primary InputStream for parsing
+   * @param retry the retryable InputStream callable for second pass (can be null)
+   * @param minEventsPerSecond minimum events/second threshold, or -1 to disable spillover
+   * @throws IOException if JSON parser cannot be initialized
+   */
+  public ObjectNodePublisher(final InputStream in, final Callable<InputStream> retry,
+                             final double minEventsPerSecond) throws IOException {
+    this(in, retry, PublisherConfig.builder()
+        .minEventsPerSecond(minEventsPerSecond)
+        .build());
+  }
+
+  /**
+   * Constructs an ObjectNodePublisher with an InputStream and full configuration.
+   *
+   * <p><strong>NEW - Approach #2: Config object</strong>
+   *
+   * <p>Allows full control over spillover behavior including threshold, delays, temp directory, etc.
+   *
+   * @param in     the primary InputStream for parsing
+   * @param retry  the retryable InputStream callable for second pass (can be null)
+   * @param config publisher configuration (use PublisherConfig.builder() to create)
+   * @throws IOException if JSON parser cannot be initialized
+   */
+  public ObjectNodePublisher(final InputStream in, final Callable<InputStream> retry,
+                             final PublisherConfig config) throws IOException {
+    this.config = config != null ? config : new PublisherConfig();
+    this.config.validate();
+
+    final InputStream bufferedIn = ensureBuffered(in);
+
+    // Wrap in SpillableInputStream if spillover is enabled
+    if (this.config.isSpilloverEnabled()) {
+      this.spillableStream = new SpillableInputStream(bufferedIn);
+      this.jsonParser = jsonFactory.createParser(this.spillableStream);
+    } else {
+      this.spillableStream = null;
+      this.jsonParser = jsonFactory.createParser(bufferedIn);
+    }
+
+    this.jsonParser.setCodec(mapper);
+    this.retryInputStream = retry;
+    this.retryReader = null;
+
+    // Initialize spillover components only if enabled
+    this.rateMonitor = this.config.isSpilloverEnabled() ? new EventRateMonitor(this.config) : null;
+    this.spilloverManager = null;  // Created on-demand when spillover triggers
+  }
+
+  /**
    * Constructs an ObjectNodePublisher with a Reader and retry fallback.
+   * Automatically buffers the Reader for optimal performance on large files.
+   *
+   * <p><strong>Spillover: DISABLED</strong> (default, backward compatible)
    *
    * @param reader primary Reader
    * @param retry  optional retryable Reader
    * @throws IOException if JSON parser cannot be initialized
    */
   public ObjectNodePublisher(final Reader reader, final Callable<Reader> retry) throws IOException {
-    this.jsonParser = jsonFactory.createParser(reader);
-    this.jsonParser.setCodec(mapper);
-    this.retryInputStream = null;
-    this.retryReader = retry;
+    this(reader, retry, new PublisherConfig());  // Default config = spillover disabled
   }
 
   /**
    * Constructs an ObjectNodePublisher with a one-shot Reader.
+   *
+   * <p><strong>Spillover: DISABLED</strong> (default, backward compatible)
    *
    * @param reader JSON document reader
    * @throws IOException if initialization fails
    */
   public ObjectNodePublisher(final Reader reader) throws IOException {
     this(reader, null);
+  }
+
+  /**
+   * Constructs an ObjectNodePublisher with a Reader, retry support, and spillover threshold.
+   *
+   * <p><strong>NEW - Approach #1: Simple threshold parameter</strong>
+   *
+   * @param reader primary Reader
+   * @param retry  optional retryable Reader (can be null)
+   * @param minEventsPerSecond minimum events/second threshold, or -1 to disable spillover
+   * @throws IOException if JSON parser cannot be initialized
+   */
+  public ObjectNodePublisher(final Reader reader, final Callable<Reader> retry,
+                             final double minEventsPerSecond) throws IOException {
+    this(reader, retry, PublisherConfig.builder()
+        .minEventsPerSecond(minEventsPerSecond)
+        .build());
+  }
+
+  /**
+   * Constructs an ObjectNodePublisher with a Reader and full configuration.
+   *
+   * <p><strong>NEW - Approach #2: Config object</strong>
+   *
+   * @param reader primary Reader
+   * @param retry  optional retryable Reader (can be null)
+   * @param config publisher configuration
+   * @throws IOException if JSON parser cannot be initialized
+   */
+  public ObjectNodePublisher(final Reader reader, final Callable<Reader> retry,
+                             final PublisherConfig config) throws IOException {
+    this.config = config != null ? config : new PublisherConfig();
+    this.config.validate();
+
+    final Reader bufferedReader = ensureBuffered(reader);
+    this.jsonParser = jsonFactory.createParser(bufferedReader);
+    this.jsonParser.setCodec(mapper);
+    this.retryInputStream = null;
+    this.retryReader = retry;
+
+    // Note: Spillover not supported for Reader-based input (only InputStream)
+    this.spillableStream = null;
+
+    // Initialize spillover components only if enabled
+    this.rateMonitor = this.config.isSpilloverEnabled() ? new EventRateMonitor(this.config) : null;
+    this.spilloverManager = null;  // Created on-demand when spillover triggers
+
+    // Warn if spillover configured but using Reader
+    if (this.config.isSpilloverEnabled()) {
+      log.warn("Spillover is configured but not supported for Reader-based input (only InputStream). " +
+               "Spillover will be disabled for this publisher.");
+    }
+  }
+
+  /**
+   * Creates a new builder for fluent configuration.
+   *
+   * <p><strong>NEW - Approach #3: Builder pattern</strong>
+   *
+   * <p>Example:
+   * <pre>{@code
+   * ObjectNodePublisher<ObjectNode> publisher = ObjectNodePublisher.builder()
+   *     .inputStream(myInputStream)
+   *     .minEventsPerSecond(1.0)
+   *     .build();
+   * }</pre>
+   *
+   * @param <T> type of ObjectNode emitted
+   * @return new builder instance
+   */
+  public static <T extends ObjectNode> ObjectNodePublisherBuilder<T> builder() {
+    return new ObjectNodePublisherBuilder<>();
+  }
+
+  /**
+   * Ensures the InputStream is buffered for optimal I/O performance.
+   * If already buffered, returns as-is. Otherwise wraps in BufferedInputStream.
+   *
+   * @param in the input stream to buffer
+   * @return buffered input stream
+   */
+  private static InputStream ensureBuffered(final InputStream in) {
+    if (in == null) {
+      throw new IllegalArgumentException("InputStream cannot be null");
+    }
+    // Check if already buffered to avoid double-wrapping
+    if (in instanceof BufferedInputStream) {
+      return in;
+    }
+    // Wrap with optimized buffer size for large files
+    return new BufferedInputStream(in, DEFAULT_BUFFER_SIZE);
+  }
+
+  /**
+   * Ensures the Reader is buffered for optimal I/O performance.
+   * If already buffered, returns as-is. Otherwise wraps in BufferedReader.
+   *
+   * @param reader the reader to buffer
+   * @return buffered reader
+   */
+  private static Reader ensureBuffered(final Reader reader) {
+    if (reader == null) {
+      throw new IllegalArgumentException("Reader cannot be null");
+    }
+    // Check if already buffered to avoid double-wrapping
+    if (reader instanceof BufferedReader) {
+      return reader;
+    }
+    // Wrap with optimized buffer size for large files
+    return new BufferedReader(reader, DEFAULT_BUFFER_SIZE);
   }
 
   /**
@@ -255,22 +443,34 @@ public class ObjectNodePublisher<T extends ObjectNode> implements Publisher<T> {
       demand.getAndAdd(l);
       try {
         while (demand.get() > 0 && !isTerminated() && !hasError()) {
+          // Check and trigger spillover if consumption rate too slow
+          checkAndTriggerSpillover();
+
           final long count = readNext(demand.get());
           if (count >= 0) {
             demand.getAndAdd(-1 * count);
             nodeCount.getAndAdd(count);
+
+            // Record event for rate monitoring
+            if (rateMonitor != null && count > 0) {
+              for (int i = 0; i < count; i++) {
+                rateMonitor.recordEvent();
+              }
+            }
           } else if (!terminate()) {
             if (!secondPass && (retryInputStream != null || retryReader != null) && ignoreEventList.get()) {
               secondPass = true;
               if (!jsonParser.isClosed()) consumeAndClose(jsonParser);
               Optional<Throwable> throwable = Optional.empty();
               if (retryInputStream != null) {
-                jsonParser = jsonFactory.createParser(retryInputStream.call());
+                final InputStream retryStream = ensureBuffered(retryInputStream.call());
+                jsonParser = jsonFactory.createParser(retryStream);
                 jsonParser.setCodec(mapper);
                 throwable = beginParsing(jsonParser);
               }
               if (retryReader != null) {
-                jsonParser = jsonFactory.createParser(retryReader.call());
+                final Reader retryReaderInstance = ensureBuffered(retryReader.call());
+                jsonParser = jsonFactory.createParser(retryReaderInstance);
                 jsonParser.setCodec(mapper);
                 throwable = beginParsing(jsonParser);
               }
@@ -283,12 +483,28 @@ public class ObjectNodePublisher<T extends ObjectNode> implements Publisher<T> {
                 continue;
               }
             }
+            cleanupSpillover();
             subscriber.get().onComplete();
             return;
           }
         }
       } catch (Exception ex) {
+        cleanupSpillover();
         if (!terminate()) subscriber.get().onError(ex);
+      }
+    }
+
+    /**
+     * Cleans up spillover resources (temp files).
+     * Safe to call multiple times - no-op if already cleaned or no spillover.
+     */
+    private void cleanupSpillover() {
+      if (spilloverManager != null) {
+        try {
+          spilloverManager.cleanup();
+        } catch (Exception e) {
+          log.warn("Error during spillover cleanup", e);
+        }
       }
     }
 
@@ -314,10 +530,12 @@ public class ObjectNodePublisher<T extends ObjectNode> implements Publisher<T> {
 
     /**
      * Cancels the subscription and nullifies the subscriber reference.
+     * Also cleans up any temporary spillover files.
      */
     @Override
     public void cancel() {
       terminate();
+      cleanupSpillover();
       subscriber.set(null);
     }
 
@@ -479,6 +697,77 @@ public class ObjectNodePublisher<T extends ObjectNode> implements Publisher<T> {
      */
     private boolean isTokenAvailable() {
       return !jsonParser.isClosed();
+    }
+
+    /**
+     * Checks if spillover should be triggered and triggers it if necessary.
+     *
+     * <p>This method is called during event streaming to detect slow consumption rates.
+     * If the rate drops below the configured threshold, the remaining input stream is
+     * eagerly spilled to a temporary file.
+     *
+     * <p><strong>EAGER spillover strategy:</strong> As soon as the threshold is breached,
+     * ALL remaining unparsed bytes are immediately copied to disk.
+     *
+     * <p>This method is a no-op if:
+     * <ul>
+     *   <li>Spillover is disabled (minEventsPerSecond = -1)</li>
+     *   <li>Spillover already triggered</li>
+     *   <li>Still in the check delay period</li>
+     *   <li>Consumption rate is above threshold</li>
+     *   <li>Using Reader-based input (spillover only supports InputStream)</li>
+     * </ul>
+     */
+    private void checkAndTriggerSpillover() {
+      // SAFETY: Skip if spillover disabled
+      if (rateMonitor == null || !config.isSpilloverEnabled()) {
+        return;
+      }
+
+      // Skip if spillableStream not available (Reader-based or already triggered)
+      if (spillableStream == null) {
+        return;
+      }
+
+      // Skip if already triggered
+      if (spilloverManager != null && spilloverManager.isSpilloverTriggered()) {
+        return;
+      }
+
+      // Skip if spillableStream already spilled
+      if (spillableStream.isSpilledOver()) {
+        return;
+      }
+
+      // Check if rate is below threshold
+      if (!rateMonitor.isBelowThreshold()) {
+        return;
+      }
+
+      // TRIGGER SPILLOVER
+      log.warn("Spillover triggered - consumption rate below threshold: {}", rateMonitor.getDiagnostics());
+      log.info("SpillableInputStream state: {}", spillableStream.getDiagnostics());
+
+      try {
+        // Create spillover manager if not already created
+        if (spilloverManager == null) {
+          spilloverManager = new SpilloverManager(config);
+        }
+
+        // Trigger spillover - this will:
+        // 1. Copy remaining bytes from original stream to temp file
+        // 2. Close the original stream gracefully
+        // 3. Switch SpillableInputStream to read from temp file
+        // 4. JsonParser continues reading transparently
+        spillableStream.spillRemaining(spilloverManager);
+
+        log.info("Spillover complete - original stream closed, now reading from temp file: {}",
+            spilloverManager.getDiagnostics());
+
+      } catch (Exception e) {
+        log.error("Failed to trigger spillover - continuing with original stream", e);
+        // Don't rethrow - degraded but functional
+      }
     }
   }
 }
