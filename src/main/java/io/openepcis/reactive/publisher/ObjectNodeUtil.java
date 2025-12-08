@@ -1,5 +1,5 @@
 /*
- * Copyright 2022-2024 benelog GmbH & Co. KG
+ * Copyright 2022-2025 benelog GmbH & Co. KG
  *
  *     Licensed under the Apache License, Version 2.0 (the "License");
  *     you may not use this file except in compliance with the License.
@@ -18,11 +18,15 @@ package io.openepcis.reactive.publisher;
 import static io.openepcis.constants.EPCIS.REQUIRED_DOCUMENT_FIELDS;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import lombok.AccessLevel;
-import lombok.NoArgsConstructor;
 
-@NoArgsConstructor(access = AccessLevel.PRIVATE)
-public class ObjectNodeUtil {
+/**
+ * Internal utility methods for ObjectNode validation.
+ */
+public final class ObjectNodeUtil {
+
+  private ObjectNodeUtil() {
+    // Utility class - prevent instantiation
+  }
 
   public static boolean isValidEPCISDocumentNode(final ObjectNode header) {
     for (String field : REQUIRED_DOCUMENT_FIELDS) {

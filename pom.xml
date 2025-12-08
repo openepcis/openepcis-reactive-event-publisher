@@ -91,10 +91,11 @@
             <artifactId>mutiny</artifactId>
         </dependency>
 
-        <!-- Log message -->
+        <!-- Optional: Netty ByteBuf support for non-blocking I/O -->
         <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-api</artifactId>
+            <groupId>io.netty</groupId>
+            <artifactId>netty-buffer</artifactId>
+            <optional>true</optional>
         </dependency>
 
         <!--Test specific dependencies-->
@@ -110,11 +111,30 @@
             <scope>test</scope>
         </dependency>
         <dependency>
+            <groupId>org.testng</groupId>
+            <artifactId>testng</artifactId>
+            <version>7.10.2</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- JUnit Platform TestNG Engine to run TestNG tests alongside JUnit 5 -->
+        <dependency>
+            <groupId>org.junit.support</groupId>
+            <artifactId>testng-engine</artifactId>
+            <version>1.0.5</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>com.fasterxml.jackson.datatype</groupId>
             <artifactId>jackson-datatype-jdk8</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
+
 
     <repositories>
         <!-- Sonatype Central snapshots -->

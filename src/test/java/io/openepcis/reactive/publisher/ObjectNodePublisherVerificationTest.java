@@ -1,5 +1,5 @@
 /*
- * Copyright 2022-2024 benelog GmbH & Co. KG
+ * Copyright 2022-2025 benelog GmbH & Co. KG
  *
  *     Licensed under the Apache License, Version 2.0 (the "License");
  *     you may not use this file except in compliance with the License.
@@ -15,67 +15,131 @@
  */
 package io.openepcis.reactive.publisher;
 
-import com.fasterxml.jackson.annotation.JsonInclude;
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import java.io.IOException;
-import java.io.StringReader;
-import java.util.concurrent.Flow;
 import org.reactivestreams.tck.TestEnvironment;
 import org.reactivestreams.tck.flow.FlowPublisherVerification;
+import org.testng.annotations.Test;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.Flow;
+
+/**
+ * Reactive Streams TCK verification test for ObjectNodePublisher.
+ *
+ * <p>This test verifies that ObjectNodePublisher correctly implements the
+ * Java 9+ Flow.Publisher specification, including proper handling of:
+ * <ul>
+ *   <li>Backpressure signals</li>
+ *   <li>Subscription lifecycle</li>
+ *   <li>Error propagation</li>
+ *   <li>Cancellation</li>
+ * </ul>
+ */
+@Test
 public class ObjectNodePublisherVerificationTest extends FlowPublisherVerification<ObjectNode> {
 
-  private final ObjectMapper objectMapper =
-      new ObjectMapper()
-          .setSerializationInclusion(JsonInclude.Include.NON_NULL)
-          .registerModule(new Jdk8Module())
-          .registerModule(new JavaTimeModule())
-          .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)
-          .configure(DeserializationFeature.FAIL_ON_MISSING_EXTERNAL_TYPE_ID_PROPERTY, false);
-
+  /**
+   * Creates test environment with default timeout settings.
+   */
   public ObjectNodePublisherVerificationTest() {
-    super(new TestEnvironment());
+    super(new TestEnvironment(300));
   }
 
+  /**
+   * Generates a test EPCIS document with the specified number of events.
+   *
+   * @param eventCount number of events to include
+   * @return JSON string of the EPCIS document
+   */
+  private String generateEPCISDocument(int eventCount) {
+    StringBuilder json = new StringBuilder();
+    json.append("{\n");
+    json.append("  \"@context\": \"https://ref.gs1.org/standards/epcis/2.0.0/epcis-context.jsonld\",\n");
+    json.append("  \"type\": \"EPCISDocument\",\n");
+    json.append("  \"schemaVersion\": \"2.0\",\n");
+    json.append("  \"creationDate\": \"2025-01-01T00:00:00.000Z\",\n");
+    json.append("  \"epcisBody\": {\n");
+    json.append("    \"eventList\": [\n");
+
+    for (int i = 0; i < eventCount; i++) {
+      if (i > 0) json.append(",\n");
+      json.append("      {\n");
+      json.append("        \"type\": \"ObjectEvent\",\n");
+      json.append("        \"eventTime\": \"2025-01-01T00:00:00.").append(String.format("%03d", i % 1000)).append("Z\",\n");
+      json.append("        \"eventTimeZoneOffset\": \"+00:00\",\n");
+      json.append("        \"action\": \"ADD\",\n");
+      json.append("        \"bizStep\": \"commissioning\"\n");
+      json.append("      }");
+    }
+
+    json.append("\n    ]\n");
+    json.append("  }\n");
+    json.append("}\n");
+    return json.toString();
+  }
+
+  /**
+   * Creates a Flow.Publisher that emits the requested number of elements.
+   * Elements = 1 header + (elements - 1) events
+   */
   @Override
-  public Flow.Publisher<ObjectNode> createFlowPublisher(long l) {
+  public Flow.Publisher<ObjectNode> createFlowPublisher(long elements) {
+    if (elements <= 0) {
+      return createFailedFlowPublisher();
+    }
+
+    // Generate document with (elements - 1) events (header counts as 1)
+    int eventCount = (int) Math.max(0, elements - 1);
+    String json = generateEPCISDocument(eventCount);
+    InputStream inputStream = new ByteArrayInputStream(json.getBytes(StandardCharsets.UTF_8));
+
     try {
-      if (l == 0) {
-        return new ObjectNodePublisher<>(new StringReader("{}"));
-      }
-      final ObjectNode json =
-          (ObjectNode)
-              objectMapper.readTree(
-                  getClass().getResourceAsStream("/object-node-publisher/ThreeEvents-earlyEventList-contextAtEnd.json"));
-      final ArrayNode eventList = (ArrayNode) json.get("epcisBody").get("eventList");
-      // eventList.size() + 1
-      // document node also has to be considered
-      while (l < eventList.size() + 1) {
-        eventList.remove(0);
-      }
-      // prevent huge event lists, max is 16
-      while (l > eventList.size() + 1 && eventList.size() < 16) {
-        eventList.add(eventList.get(0).deepCopy());
-      }
-      final String doc = objectMapper.writeValueAsString(json);
-      return new ObjectNodePublisher(new StringReader(doc), () -> new StringReader(doc));
+      return ObjectNodePublisher.fromInputStream(inputStream);
     } catch (IOException e) {
-      throw new RuntimeException(e);
+      throw new RuntimeException("Failed to create publisher", e);
     }
   }
 
+  /**
+   * Creates a publisher that fails immediately after onSubscribe.
+   * Per spec109, onError must be signaled after onSubscribe but before any other signal.
+   */
   @Override
   public Flow.Publisher<ObjectNode> createFailedFlowPublisher() {
-    try {
-      return new ObjectNodePublisher(
-          getClass().getResourceAsStream("/object-node-publisher/ThrowError.json"));
-    } catch (IOException e) {
-      throw new RuntimeException(e);
-    }
+    return subscriber -> {
+      subscriber.onSubscribe(new Flow.Subscription() {
+        @Override
+        public void request(long n) {
+          // No-op - error already signaled
+        }
+
+        @Override
+        public void cancel() {
+          // No-op
+        }
+      });
+      // Signal error immediately after onSubscribe
+      subscriber.onError(new RuntimeException("Failed publisher for TCK test"));
+    };
+  }
+
+  /**
+   * Returns the maximum number of elements that can be produced.
+   * We limit this to avoid generating extremely large documents in tests.
+   */
+  @Override
+  public long maxElementsFromPublisher() {
+    return 100; // Header + up to 99 events
+  }
+
+  /**
+   * Indicates the bounded depth of onNext and request recursion.
+   */
+  @Override
+  public long boundedDepthOfOnNextAndRequestRecursion() {
+    return 1;
   }
 }

@@ -113,7 +113,7 @@ public class LargeFilePerformanceTest {
     final int[] processedCount = {0};
     final long[] totalProcessingTime = {0};
 
-    final ObjectNodePublisher<ObjectNode> publisher = new ObjectNodePublisher<>(inputStream);
+    final ObjectNodePublisher<ObjectNode> publisher = ObjectNodePublisher.fromInputStream(inputStream);
 
     // Very slow subscriber that processes items one at a time with significant delay
     Multi.createFrom().publisher(publisher)
@@ -185,7 +185,7 @@ public class LargeFilePerformanceTest {
     System.out.println("Starting parse with ObjectNodePublisher (buffered)...");
     final long startTime = System.currentTimeMillis();
 
-    final ObjectNodePublisher<ObjectNode> publisher = new ObjectNodePublisher<>(inputStream);
+    final ObjectNodePublisher<ObjectNode> publisher = ObjectNodePublisher.fromInputStream(inputStream);
     final var result = Multi.createFrom().publisher(publisher).subscribe().asStream().toList();
 
     final long endTime = System.currentTimeMillis();
@@ -227,7 +227,7 @@ public class LargeFilePerformanceTest {
     System.out.println("Starting parse with ObjectNodePublisher (buffered)...");
     final long startTime = System.currentTimeMillis();
 
-    final ObjectNodePublisher<ObjectNode> publisher = new ObjectNodePublisher<>(inputStream);
+    final ObjectNodePublisher<ObjectNode> publisher = ObjectNodePublisher.fromInputStream(inputStream);
 
     // Stream and count without collecting all in memory
     final long[] eventCount_actual = {0};
@@ -272,7 +272,7 @@ public class LargeFilePerformanceTest {
     final String smallJson = generateLargeEPCISDocument(3);
     final InputStream inputStream = new ByteArrayInputStream(smallJson.getBytes(StandardCharsets.UTF_8));
 
-    final ObjectNodePublisher<ObjectNode> publisher = new ObjectNodePublisher<>(inputStream);
+    final ObjectNodePublisher<ObjectNode> publisher = ObjectNodePublisher.fromInputStream(inputStream);
     final var result = Multi.createFrom().publisher(publisher).subscribe().asStream().toList();
 
     assertNotNull(result);
