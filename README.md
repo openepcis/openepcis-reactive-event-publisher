@@ -79,7 +79,7 @@ ObjectNodePublisher.fromMulti(body)
 // With InputStream
 ObjectNodePublisher.builder()
     .inputStream(myInputStream)
-    .bufferSize(16384)  // optional, default 8192
+    .bufferSize(16384)  // optional, default 65536 (64KB)
     .retryInputStream(() -> new FileInputStream("data.json"))
     .build();
 
@@ -156,6 +156,26 @@ if (ByteBufSupport.isAvailable()) {
 ```
 
 **Note:** Netty dependency is optional. Methods throw `NoClassDefFoundError` if Netty is not on classpath.
+
+## Migration from Pre-0.9.5 (Deprecated Constructors)
+
+If you're using the old constructor-based API, it still works but is deprecated:
+
+```java
+// OLD (deprecated) - still works for backward compatibility
+new ObjectNodePublisher<>(inputStream);
+new ObjectNodePublisher<>(inputStream, retryCallable);
+new ObjectNodePublisher<>(reader);  // requires commons-io on classpath
+new ObjectNodePublisher<>(reader, retryCallable);
+
+// NEW (recommended) - use factory methods
+ObjectNodePublisher.fromInputStream(inputStream);
+ObjectNodePublisher.fromInputStream(inputStream, retryCallable);
+ObjectNodePublisher.fromPath(path);  // auto-handles retry
+ObjectNodePublisher.builder().inputStream(inputStream).build();
+```
+
+**Note:** Reader constructors require Apache Commons IO (`commons-io`) on the classpath for `ReaderInputStream` support.
 
 ## The Early-EventList Problem
 
