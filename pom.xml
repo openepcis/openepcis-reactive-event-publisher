@@ -98,6 +98,13 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- Optional: Apache Commons IO for Reader support (backward compatibility) -->
+        <dependency>
+            <groupId>commons-io</groupId>
+            <artifactId>commons-io</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!--Test specific dependencies-->
         <dependency>
             <groupId>org.junit.jupiter</groupId>

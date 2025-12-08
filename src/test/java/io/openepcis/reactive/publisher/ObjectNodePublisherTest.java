@@ -136,7 +136,7 @@ public class ObjectNodePublisherTest {
   @Test
   public void testNullSourceThrows() {
     assertThrows(IllegalArgumentException.class, () ->
-        new ObjectNodePublisher<>(null));
+        new ObjectNodePublisher<>((Flow.Publisher<ByteBuffer>) null));
   }
 
   @Test

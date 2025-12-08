@@ -17,6 +17,8 @@ package io.openepcis.reactive.publisher;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.Reader;
 import java.nio.ByteBuffer;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Flow;
@@ -83,6 +85,9 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public class ObjectNodePublisher<T extends ObjectNode> implements Publisher<T> {
 
+  /** Default buffer size for InputStream/Reader buffering (64KB - optimal for most filesystems) */
+  private static final int DEFAULT_BUFFER_SIZE = 65536;
+
   private final Flow.Publisher<ByteBuffer> source;
   private final Callable<Flow.Publisher<ByteBuffer>> retrySource;
   private final AtomicReference<ByteBufferSubscription> subscription = new AtomicReference<>();
@@ -113,6 +118,70 @@ public class ObjectNodePublisher<T extends ObjectNode> implements Publisher<T> {
     }
     this.source = source;
     this.retrySource = retrySource;
+  }
+
+  // ==================== Deprecated Backward Compatibility Constructors ====================
+
+  /**
+   * Creates a new ObjectNodePublisher from an InputStream.
+   *
+   * @param in InputStream for reading the JSON content
+   * @throws IOException if parser initialization fails
+   * @deprecated Use {@link #fromInputStream(java.io.InputStream)} or {@link Builder} instead.
+   */
+  @Deprecated(since = "0.9.5", forRemoval = true)
+  public ObjectNodePublisher(InputStream in) throws IOException {
+    this(createInputStreamPublisher(in, DEFAULT_BUFFER_SIZE), null);
+  }
+
+  /**
+   * Creates a new ObjectNodePublisher from an InputStream with retry support.
+   *
+   * @param in the primary InputStream for parsing
+   * @param retry the retryable InputStream callable for second pass
+   * @throws IOException if JSON parser cannot be initialized
+   * @deprecated Use {@link #fromInputStream(java.io.InputStream, Callable)} or {@link Builder} instead.
+   */
+  @Deprecated(since = "0.9.5", forRemoval = true)
+  public ObjectNodePublisher(InputStream in, Callable<InputStream> retry) throws IOException {
+    this(createInputStreamPublisher(in, DEFAULT_BUFFER_SIZE),
+         retry == null ? null : () -> createInputStreamPublisher(retry.call(), DEFAULT_BUFFER_SIZE));
+  }
+
+  /**
+   * Creates a new ObjectNodePublisher from a Reader.
+   *
+   * <p>Requires Apache Commons IO on the classpath for ReaderInputStream support.
+   *
+   * @param reader JSON document reader
+   * @throws IOException if initialization fails
+   * @deprecated Use InputStream-based methods instead (Reader support may be removed).
+   */
+  @Deprecated(since = "0.9.5", forRemoval = true)
+  public ObjectNodePublisher(Reader reader) throws IOException {
+    this(createInputStreamPublisher(
+        new org.apache.commons.io.input.ReaderInputStream(reader, java.nio.charset.StandardCharsets.UTF_8),
+        DEFAULT_BUFFER_SIZE), null);
+  }
+
+  /**
+   * Creates a new ObjectNodePublisher from a Reader with retry support.
+   *
+   * <p>Requires Apache Commons IO on the classpath for ReaderInputStream support.
+   *
+   * @param reader primary Reader
+   * @param retry optional retryable Reader
+   * @throws IOException if JSON parser cannot be initialized
+   * @deprecated Use InputStream-based methods instead (Reader support may be removed).
+   */
+  @Deprecated(since = "0.9.5", forRemoval = true)
+  public ObjectNodePublisher(Reader reader, Callable<Reader> retry) throws IOException {
+    this(createInputStreamPublisher(
+             new org.apache.commons.io.input.ReaderInputStream(reader, java.nio.charset.StandardCharsets.UTF_8),
+             DEFAULT_BUFFER_SIZE),
+         retry == null ? null : () -> createInputStreamPublisher(
+             new org.apache.commons.io.input.ReaderInputStream(retry.call(), java.nio.charset.StandardCharsets.UTF_8),
+             DEFAULT_BUFFER_SIZE));
   }
 
   /**
@@ -235,7 +304,7 @@ public class ObjectNodePublisher<T extends ObjectNode> implements Publisher<T> {
    */
   public static <T extends ObjectNode> ObjectNodePublisher<T> fromInputStream(
       java.io.InputStream inputStream) throws IOException {
-    return fromInputStream(inputStream, 8192);
+    return fromInputStream(inputStream, DEFAULT_BUFFER_SIZE);
   }
 
   /**
@@ -306,7 +375,7 @@ public class ObjectNodePublisher<T extends ObjectNode> implements Publisher<T> {
   public static <T extends ObjectNode> ObjectNodePublisher<T> fromInputStream(
       java.io.InputStream inputStream,
       Callable<java.io.InputStream> retryInputStream) throws IOException {
-    return fromInputStream(inputStream, retryInputStream, 8192);
+    return fromInputStream(inputStream, retryInputStream, DEFAULT_BUFFER_SIZE);
   }
 
   /**
@@ -747,12 +816,10 @@ public class ObjectNodePublisher<T extends ObjectNode> implements Publisher<T> {
    * @param <T> type of ObjectNode emitted
    */
   public static class Builder<T extends ObjectNode> {
-    private static final int DEFAULT_BUFFER_SIZE = 8192;
-
     private Flow.Publisher<ByteBuffer> source;
     private Callable<Flow.Publisher<ByteBuffer>> retrySource;
     private java.io.InputStream inputStream;
-    private int bufferSize = DEFAULT_BUFFER_SIZE;
+    private int bufferSize = ObjectNodePublisher.DEFAULT_BUFFER_SIZE;
     private Callable<java.io.InputStream> retryInputStream;
 
     Builder() {}
@@ -800,7 +867,7 @@ public class ObjectNodePublisher<T extends ObjectNode> implements Publisher<T> {
      * Sets the buffer size for reading from InputStream.
      *
      * <p>Only applicable when using {@link #inputStream(java.io.InputStream)}.
-     * Default is 8192 bytes.
+     * Default is 65536 bytes (64KB).
      *
      * @param bufferSize the buffer size in bytes
      * @return this builder
