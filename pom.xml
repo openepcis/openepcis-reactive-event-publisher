@@ -98,6 +98,13 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- Optional: Vert.x Buffer support for Quarkus REST integration -->
+        <dependency>
+            <groupId>io.vertx</groupId>
+            <artifactId>vertx-core</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- Optional: Apache Commons IO for Reader support (backward compatibility) -->
         <dependency>
             <groupId>commons-io</groupId>
