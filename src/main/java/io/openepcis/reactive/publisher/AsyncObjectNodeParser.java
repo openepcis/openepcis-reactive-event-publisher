@@ -38,8 +38,24 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  * <ul>
  *   <li>Emits the document header first (with @context, type, schemaVersion, etc.)</li>
  *   <li>Emits each event from eventList as a separate ObjectNode</li>
- *   <li>Handles early-eventList documents (eventList before @context)</li>
+ *   <li>Automatically detects and handles early-eventList documents (eventList before @context)</li>
  * </ul>
+ *
+ * <h2>Early-eventList Handling</h2>
+ *
+ * <p>Some EPCIS documents have the {@code eventList} appearing before the {@code @context} field.
+ * This parser automatically detects this situation:
+ *
+ * <ul>
+ *   <li><strong>Detection:</strong> When entering eventList, if @context hasn't been seen yet,
+ *       {@link #isEarlyEventListDetected()} returns true</li>
+ *   <li><strong>First pass behavior:</strong> Events are skipped, only header is emitted</li>
+ *   <li><strong>Retry pass:</strong> Use {@link #setRetryPass()} before parsing to process events
+ *       (header will be skipped since it was emitted on first pass)</li>
+ * </ul>
+ *
+ * <p>This design enables {@link ObjectNodePublisher} to automatically retry with a fresh source
+ * when early-eventList is detected, ensuring all events are properly parsed.
  *
  * <p><strong>Usage:</strong>
  * <pre>{@code
@@ -56,9 +72,18 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  *
  * // When input is complete
  * parser.endOfInput();
+ *
+ * // Check if retry is needed
+ * if (parser.isEarlyEventListDetected()) {
+ *     // Need to retry with fresh source - events were skipped
+ * }
  * }</pre>
  *
  * <p><strong>Thread safety:</strong> This class is NOT thread-safe. Access from single thread only.
+ *
+ * @see ObjectNodePublisher
+ * @see #isEarlyEventListDetected()
+ * @see #setRetryPass()
  */
 public class AsyncObjectNodeParser {
 
@@ -106,7 +131,8 @@ public class AsyncObjectNodeParser {
   private State state = State.INITIAL;
   private boolean inputComplete = false;
   private boolean headerEmitted = false;
-  private boolean ignoreEventList = false;
+  private boolean earlyEventListDetected = false;
+  private boolean retryPass = false;
 
   // Tree building state
   private final Deque<ContainerNode<?>> nodeStack = new ArrayDeque<>();
@@ -190,7 +216,8 @@ public class AsyncObjectNodeParser {
     processTokens();
 
     // Emit header if we have a valid one and haven't emitted it
-    if (!headerEmitted && ObjectNodeUtil.isValidEPCISDocumentNode(header)) {
+    // On retry pass, skip header (already emitted on first pass)
+    if (!headerEmitted && !retryPass && ObjectNodeUtil.isValidEPCISDocumentNode(header)) {
       emitHeader();
     }
 
@@ -234,21 +261,21 @@ public class AsyncObjectNodeParser {
   }
 
   /**
-   * Sets whether to ignore eventList (for early-eventList retry handling).
+   * Checks if early-eventList was detected (eventList before @context).
+   * When true, retry with a fresh source is needed to properly parse events.
    *
-   * @param ignore true to skip events
+   * @return true if early-eventList was detected
    */
-  public void setIgnoreEventList(boolean ignore) {
-    this.ignoreEventList = ignore;
+  public boolean isEarlyEventListDetected() {
+    return earlyEventListDetected;
   }
 
   /**
-   * Checks if eventList is being ignored.
-   *
-   * @return true if ignoring events
+   * Marks this parser as a retry pass. On retry, early-eventList detection
+   * is disabled so events are processed normally.
    */
-  public boolean isIgnoreEventList() {
-    return ignoreEventList;
+  public void setRetryPass() {
+    this.retryPass = true;
   }
 
   /**
@@ -337,7 +364,8 @@ public class AsyncObjectNodeParser {
       case END_OBJECT:
         if (nodeStack.isEmpty()) {
           // Document root closed - emit header if valid
-          if (!headerEmitted && ObjectNodeUtil.isValidEPCISDocumentNode(header)) {
+          // On retry pass, skip header (already emitted on first pass)
+          if (!headerEmitted && !retryPass && ObjectNodeUtil.isValidEPCISDocumentNode(header)) {
             emitHeader();
           }
           state = State.COMPLETE;
@@ -390,6 +418,10 @@ public class AsyncObjectNodeParser {
 
       case START_ARRAY:
         if (EVENT_LIST_IN_CAMEL_CASE.equals(currentFieldName)) {
+          // Detect early-eventList: eventList appears before @context (only on first pass)
+          if (!retryPass && !header.has(CONTEXT)) {
+            earlyEventListDetected = true;
+          }
           state = State.IN_EVENT_LIST;
           eventListArrayDepth = 1;
         } else {
@@ -422,7 +454,8 @@ public class AsyncObjectNodeParser {
   private void handleInEventList(JsonToken token) throws IOException {
     switch (token) {
       case START_OBJECT:
-        if (ignoreEventList) {
+        if (earlyEventListDetected) {
+          // Skip events on first pass when early-eventList detected; retry will handle them
           skipCurrentStructure();
         } else {
           // Start new event
@@ -439,7 +472,8 @@ public class AsyncObjectNodeParser {
           state = State.IN_EPCIS_BODY;
 
           // If we haven't emitted header yet and it's valid, emit it now
-          if (!headerEmitted && ObjectNodeUtil.isValidEPCISDocumentNode(header)) {
+          // On retry pass, skip header (already emitted on first pass)
+          if (!headerEmitted && !retryPass && ObjectNodeUtil.isValidEPCISDocumentNode(header)) {
             emitHeader();
           }
         }
@@ -504,8 +538,8 @@ public class AsyncObjectNodeParser {
         if (eventDepth == 0) {
           // Event complete
           if (currentEvent.has(TYPE)) {
-            // Emit header first if not done
-            if (!headerEmitted && ObjectNodeUtil.isValidEPCISDocumentNode(header)) {
+            // Emit header first if not done (skip on retry - already emitted on first pass)
+            if (!headerEmitted && !retryPass && ObjectNodeUtil.isValidEPCISDocumentNode(header)) {
               emitHeader();
             }
             readyNodes.add(currentEvent);

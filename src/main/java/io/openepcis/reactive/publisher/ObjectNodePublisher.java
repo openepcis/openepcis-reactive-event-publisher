@@ -686,12 +686,13 @@ public class ObjectNodePublisher<T extends ObjectNode> implements Publisher<T> {
             p.endOfInput();
 
             // Check if we need retry for early-eventList
-            if (p.isIgnoreEventList() && retrySource != null && !secondPass) {
+            if (p.isEarlyEventListDetected() && retrySource != null && !secondPass) {
               secondPass = true;
               sourceComplete = false;  // Reset for retry
               AsyncObjectNodeParser oldParser = parser;
               try {
                 parser = new AsyncObjectNodeParser();
+                parser.setRetryPass();  // Mark as retry so early-eventList detection is disabled
                 subscribeToSource(retrySource.call());
               } finally {
                 if (oldParser != null) {

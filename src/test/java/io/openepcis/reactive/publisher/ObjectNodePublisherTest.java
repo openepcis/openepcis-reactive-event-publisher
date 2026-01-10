@@ -183,10 +183,9 @@ public class ObjectNodePublisherTest {
   }
 
   @Test
-  public void testEarlyEventListDocument() throws IOException {
+  public void testEarlyEventListDocumentWithoutRetry() throws IOException {
     // Document where eventList appears before @context
-    // Unlike blocking ObjectNodePublisher, the reactive publisher streams events as they arrive
-    // and doesn't hold them back waiting for @context
+    // Without retry source, early-eventList detection skips events on first pass
     byte[] json = readResource("/object-node-publisher/TwoEvents-earlyEventList.json");
 
     ObjectNodePublisher<ObjectNode> publisher = new ObjectNodePublisher<>(
@@ -196,21 +195,11 @@ public class ObjectNodePublisherTest {
     List<ObjectNode> nodes = Multi.createFrom().publisher(publisher)
         .subscribe().asStream().toList();
 
-    // Should get header + 2 events = 3 nodes
-    // Note: In early-eventList docs, events may be emitted before header
-    assertEquals(3, nodes.size());
+    // Without retry, only header is emitted (events are skipped due to early-eventList)
+    assertEquals(1, nodes.size());
 
-    // Find header (has EPCISDocument type)
-    long headerCount = nodes.stream()
-        .filter(n -> EPCIS.EPCIS_DOCUMENT.equals(n.path(EPCIS.TYPE).asText()))
-        .count();
-    assertEquals(1, headerCount);
-
-    // Find events (have event types like ObjectEvent, TransformationEvent)
-    long eventCount = nodes.stream()
-        .filter(n -> n.has(EPCIS.TYPE) && !EPCIS.EPCIS_DOCUMENT.equals(n.path(EPCIS.TYPE).asText()))
-        .count();
-    assertEquals(2, eventCount);
+    // Verify it's the header
+    assertEquals(EPCIS.EPCIS_DOCUMENT, nodes.get(0).path(EPCIS.TYPE).asText());
   }
 
   @Test
@@ -655,6 +644,170 @@ public class ObjectNodePublisherTest {
     } finally {
       java.nio.file.Files.deleteIfExists(tempFile);
     }
+  }
+
+  // ========== Early-eventList Behavior Tests ==========
+
+  @Test
+  public void testRetryActuallyTriggeredForEarlyEventList() throws Exception {
+    // Verify that retry is actually triggered when early-eventList is detected
+    java.nio.file.Path tempFile = java.nio.file.Files.createTempFile("epcis-early-eventlist", ".json");
+    try {
+      byte[] json = readResource("/object-node-publisher/TwoEvents-earlyEventList.json");
+      java.nio.file.Files.write(tempFile, json);
+
+      java.util.concurrent.atomic.AtomicInteger retryCount = new java.util.concurrent.atomic.AtomicInteger(0);
+
+      List<ObjectNode> nodes;
+      try (InputStream is = java.nio.file.Files.newInputStream(tempFile)) {
+        nodes = ObjectNodePublisher.fromInputStream(is, () -> {
+          retryCount.incrementAndGet();
+          return java.nio.file.Files.newInputStream(tempFile);
+        }).toMulti()
+            .subscribe().asStream().toList();
+      }
+
+      // Retry MUST have been triggered exactly once for early-eventList document
+      assertEquals(1, retryCount.get(), "Retry should be triggered exactly once for early-eventList document");
+      assertEquals(3, nodes.size());
+    } finally {
+      java.nio.file.Files.deleteIfExists(tempFile);
+    }
+  }
+
+  @Test
+  public void testNoRetryForNormalDocument() throws Exception {
+    // Verify that retry is NOT triggered for normal documents
+    java.nio.file.Path tempFile = java.nio.file.Files.createTempFile("epcis-normal", ".json");
+    try {
+      byte[] json = readResource("/object-node-publisher/TwoEvents.json");
+      java.nio.file.Files.write(tempFile, json);
+
+      java.util.concurrent.atomic.AtomicInteger retryCount = new java.util.concurrent.atomic.AtomicInteger(0);
+
+      List<ObjectNode> nodes;
+      try (InputStream is = java.nio.file.Files.newInputStream(tempFile)) {
+        nodes = ObjectNodePublisher.fromInputStream(is, () -> {
+          retryCount.incrementAndGet();
+          return java.nio.file.Files.newInputStream(tempFile);
+        }).toMulti()
+            .subscribe().asStream().toList();
+      }
+
+      // Retry should NOT have been triggered for normal document
+      assertEquals(0, retryCount.get(), "Retry should not be triggered for normal document");
+      assertEquals(3, nodes.size()); // header + 2 events
+    } finally {
+      java.nio.file.Files.deleteIfExists(tempFile);
+    }
+  }
+
+  @Test
+  public void testEarlyEventListWithContextAtEnd() throws Exception {
+    // Test document where @context appears at the very end
+    java.nio.file.Path tempFile = java.nio.file.Files.createTempFile("epcis-context-at-end", ".json");
+    try {
+      byte[] json = readResource("/object-node-publisher/TwoEvents-earlyEventList-contextAtEnd.json");
+      java.nio.file.Files.write(tempFile, json);
+
+      java.util.concurrent.atomic.AtomicInteger retryCount = new java.util.concurrent.atomic.AtomicInteger(0);
+
+      List<ObjectNode> nodes;
+      try (InputStream is = java.nio.file.Files.newInputStream(tempFile)) {
+        nodes = ObjectNodePublisher.fromInputStream(is, () -> {
+          retryCount.incrementAndGet();
+          return java.nio.file.Files.newInputStream(tempFile);
+        }).toMulti()
+            .subscribe().asStream().toList();
+      }
+
+      // Should trigger retry and emit all nodes
+      assertEquals(1, retryCount.get(), "Retry should be triggered for context-at-end document");
+      assertEquals(3, nodes.size());
+      assertTrue(EPCISNodes.hasHeader(nodes));
+
+      // Verify header has @context
+      ObjectNode header = nodes.stream()
+          .filter(n -> EPCIS.EPCIS_DOCUMENT.equals(n.path(EPCIS.TYPE).asText()))
+          .findFirst()
+          .orElseThrow();
+      assertTrue(header.has(EPCIS.CONTEXT), "Header should have @context");
+    } finally {
+      java.nio.file.Files.deleteIfExists(tempFile);
+    }
+  }
+
+  @Test
+  public void testEarlyEventListWithManyEvents() throws Exception {
+    // Test with 3 events to ensure all events are captured on retry
+    java.nio.file.Path tempFile = java.nio.file.Files.createTempFile("epcis-early-3events", ".json");
+    try {
+      byte[] json = readResource("/object-node-publisher/ThreeEvents-earlyEventList.json");
+      java.nio.file.Files.write(tempFile, json);
+
+      List<ObjectNode> nodes;
+      try (InputStream is = java.nio.file.Files.newInputStream(tempFile)) {
+        nodes = ObjectNodePublisher.fromInputStream(is, () ->
+            java.nio.file.Files.newInputStream(tempFile)
+        ).toMulti()
+            .subscribe().asStream().toList();
+      }
+
+      // Should get header + 3 events
+      assertEquals(4, nodes.size());
+      assertTrue(EPCISNodes.hasHeader(nodes));
+      assertEquals(3, EPCISNodes.countEvents(nodes));
+    } finally {
+      java.nio.file.Files.deleteIfExists(tempFile);
+    }
+  }
+
+  @Test
+  public void testEarlyEventListHeaderEmittedFirst() throws Exception {
+    // Verify that header is always the first node even with early-eventList + retry
+    java.nio.file.Path tempFile = java.nio.file.Files.createTempFile("epcis-early-order", ".json");
+    try {
+      byte[] json = readResource("/object-node-publisher/TwoEvents-earlyEventList.json");
+      java.nio.file.Files.write(tempFile, json);
+
+      List<ObjectNode> nodes;
+      try (InputStream is = java.nio.file.Files.newInputStream(tempFile)) {
+        nodes = ObjectNodePublisher.fromInputStream(is, () ->
+            java.nio.file.Files.newInputStream(tempFile)
+        ).toMulti()
+            .subscribe().asStream().toList();
+      }
+
+      // First node must be the header
+      assertEquals(EPCIS.EPCIS_DOCUMENT, nodes.get(0).path(EPCIS.TYPE).asText(),
+          "First node should always be the header");
+
+      // Remaining nodes should be events
+      for (int i = 1; i < nodes.size(); i++) {
+        assertNotEquals(EPCIS.EPCIS_DOCUMENT, nodes.get(i).path(EPCIS.TYPE).asText(),
+            "Nodes after header should be events");
+      }
+    } finally {
+      java.nio.file.Files.deleteIfExists(tempFile);
+    }
+  }
+
+  @Test
+  public void testEarlyEventListWithoutRetryReturnsOnlyHeader() throws IOException {
+    // Explicitly test that without retry, only header is returned
+    byte[] json = readResource("/object-node-publisher/ThreeEvents-earlyEventList.json");
+
+    // Use constructor without retry source
+    ObjectNodePublisher<ObjectNode> publisher = new ObjectNodePublisher<>(
+        createByteBufferPublisher(json)
+    );
+
+    List<ObjectNode> nodes = Multi.createFrom().publisher(publisher)
+        .subscribe().asStream().toList();
+
+    // Should only get header (3 events skipped due to early-eventList without retry)
+    assertEquals(1, nodes.size());
+    assertEquals(EPCIS.EPCIS_DOCUMENT, nodes.get(0).path(EPCIS.TYPE).asText());
   }
 
   // Helper methods

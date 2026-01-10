@@ -154,20 +154,122 @@ public class AsyncObjectNodeParserTest {
     assertFalse(nodes.isEmpty());
   }
 
+  // ========== Early-eventList Detection Tests ==========
+
   @Test
-  public void testIgnoreEventList() throws IOException {
+  public void testEarlyEventListNotDetectedForNormalDocument() throws IOException {
     AsyncObjectNodeParser parser = new AsyncObjectNodeParser();
-    parser.setIgnoreEventList(true);
 
     byte[] json = readResource("/object-node-publisher/ThreeEvents.json");
     parser.feedInput(json, 0, json.length);
     parser.endOfInput();
 
+    // Normal document should not trigger early-eventList detection
+    assertFalse(parser.isEarlyEventListDetected());
+
     List<ObjectNode> nodes = drainNodes(parser);
 
-    // Should have only the header (events ignored)
+    // Should have header + 3 events
+    assertEquals(4, nodes.size());
+    assertEquals(EPCIS.EPCIS_DOCUMENT, nodes.get(0).get(EPCIS.TYPE).asText());
+  }
+
+  @Test
+  public void testEarlyEventListDetectedWhenEventListBeforeContext() throws IOException {
+    AsyncObjectNodeParser parser = new AsyncObjectNodeParser();
+
+    // Document where eventList appears before @context
+    byte[] json = readResource("/object-node-publisher/TwoEvents-earlyEventList.json");
+    parser.feedInput(json, 0, json.length);
+    parser.endOfInput();
+
+    // Should detect early-eventList
+    assertTrue(parser.isEarlyEventListDetected());
+
+    List<ObjectNode> nodes = drainNodes(parser);
+
+    // On first pass with earlyEventListDetected, only header is emitted (events skipped)
     assertEquals(1, nodes.size());
     assertEquals(EPCIS.EPCIS_DOCUMENT, nodes.get(0).get(EPCIS.TYPE).asText());
+  }
+
+  @Test
+  public void testEarlyEventListWithContextAtEnd() throws IOException {
+    AsyncObjectNodeParser parser = new AsyncObjectNodeParser();
+
+    // Document where @context appears at the very end
+    byte[] json = readResource("/object-node-publisher/TwoEvents-earlyEventList-contextAtEnd.json");
+    parser.feedInput(json, 0, json.length);
+    parser.endOfInput();
+
+    // Should detect early-eventList
+    assertTrue(parser.isEarlyEventListDetected());
+
+    List<ObjectNode> nodes = drainNodes(parser);
+
+    // Header should still be emitted with @context (collected at end)
+    assertEquals(1, nodes.size());
+    ObjectNode header = nodes.get(0);
+    assertEquals(EPCIS.EPCIS_DOCUMENT, header.get(EPCIS.TYPE).asText());
+    assertTrue(header.has(EPCIS.CONTEXT), "Header should have @context even if it appeared at end");
+  }
+
+  @Test
+  public void testRetryPassProcessesEventsNormally() throws IOException {
+    AsyncObjectNodeParser parser = new AsyncObjectNodeParser();
+    parser.setRetryPass();  // Mark as retry
+
+    // Same early-eventList document
+    byte[] json = readResource("/object-node-publisher/TwoEvents-earlyEventList.json");
+    parser.feedInput(json, 0, json.length);
+    parser.endOfInput();
+
+    // On retry pass, earlyEventListDetected should NOT be set
+    assertFalse(parser.isEarlyEventListDetected());
+
+    List<ObjectNode> nodes = drainNodes(parser);
+
+    // On retry pass, only events are emitted (header skipped since it was emitted on first pass)
+    assertEquals(2, nodes.size());
+    // Both should be events (no header)
+    for (ObjectNode node : nodes) {
+      assertNotEquals(EPCIS.EPCIS_DOCUMENT, node.get(EPCIS.TYPE).asText());
+    }
+  }
+
+  @Test
+  public void testRetryPassSkipsHeaderEmission() throws IOException {
+    AsyncObjectNodeParser parser = new AsyncObjectNodeParser();
+    parser.setRetryPass();  // Mark as retry
+
+    // Normal document (not early-eventList)
+    byte[] json = readResource("/object-node-publisher/TwoEvents.json");
+    parser.feedInput(json, 0, json.length);
+    parser.endOfInput();
+
+    List<ObjectNode> nodes = drainNodes(parser);
+
+    // On retry pass, header is skipped, only events emitted
+    assertEquals(2, nodes.size());
+    for (ObjectNode node : nodes) {
+      assertNotEquals(EPCIS.EPCIS_DOCUMENT, node.get(EPCIS.TYPE).asText());
+    }
+  }
+
+  @Test
+  public void testEarlyEventListWithMultipleEvents() throws IOException {
+    AsyncObjectNodeParser parser = new AsyncObjectNodeParser();
+
+    byte[] json = readResource("/object-node-publisher/ThreeEvents-earlyEventList.json");
+    parser.feedInput(json, 0, json.length);
+    parser.endOfInput();
+
+    assertTrue(parser.isEarlyEventListDetected());
+
+    List<ObjectNode> nodes = drainNodes(parser);
+
+    // First pass: only header (3 events skipped)
+    assertEquals(1, nodes.size());
   }
 
   @Test
