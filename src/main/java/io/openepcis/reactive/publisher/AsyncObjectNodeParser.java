@@ -346,33 +346,31 @@ public class AsyncObjectNodeParser {
         break;
 
       case START_OBJECT:
-        // Nested object in header
+        // Nested object value in the header (e.g. a bare-object @context, or any structured
+        // header field). Read it as a fully self-contained subtree so `header` and the shared
+        // nodeStack are never mutated — the reader consumes exactly through the matching
+        // END_OBJECT and returns. This keeps `header` intact for ALL @context shapes.
         ObjectNode nestedObj = NODE_FACTORY.objectNode();
         header.set(currentFieldName, nestedObj);
-        nodeStack.push(header);
-        header = nestedObj;
+        readObjectIntoParent(nestedObj, 0);
         break;
 
       case START_ARRAY:
-        // Array in header (like @context)
+        // Array value in the header (the common @context form, incl. arrays that contain
+        // objects with their own array-valued fields like `contextUrls`). Self-contained read;
+        // no header/nodeStack side effects.
         ArrayNode arr = NODE_FACTORY.arrayNode();
         header.set(currentFieldName, arr);
-        nodeStack.push(header);
         readArrayIntoParent(arr, 0);
         break;
 
       case END_OBJECT:
-        if (nodeStack.isEmpty()) {
-          // Document root closed - emit header if valid
-          // On retry pass, skip header (already emitted on first pass)
-          if (!headerEmitted && !retryPass && ObjectNodeUtil.isValidEPCISDocumentNode(header)) {
-            emitHeader();
-          }
-          state = State.COMPLETE;
-        } else {
-          // Pop back to parent object
-          header = (ObjectNode) nodeStack.pop();
+        // With self-contained header-subtree reads above, the only END_OBJECT reaching this
+        // main-loop handler is the document root close.
+        if (!headerEmitted && !retryPass && ObjectNodeUtil.isValidEPCISDocumentNode(header)) {
+          emitHeader();
         }
+        state = State.COMPLETE;
         break;
 
       case VALUE_STRING:
@@ -673,13 +671,11 @@ public class AsyncObjectNodeParser {
       }
     }
 
-    // Pop back to header with defensive type check
-    if (!nodeStack.isEmpty()) {
-      ContainerNode<?> popped = nodeStack.pop();
-      if (popped instanceof ObjectNode obj) {
-        header = obj;
-      }
-    }
+    // Self-contained: this reader builds the array subtree from the tokens it consumes and
+    // returns with the parser positioned just past the array's END_ARRAY. It intentionally does
+    // NOT touch `header` or the shared nodeStack (the previous pop-back-to-header here corrupted
+    // the header for @context arrays whose objects held array-valued fields like `contextUrls`,
+    // dropping @context and causing every event to be skipped as "early-eventList").
   }
 
   /**
