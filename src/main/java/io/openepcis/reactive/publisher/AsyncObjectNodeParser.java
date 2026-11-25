@@ -147,6 +147,12 @@ public class AsyncObjectNodeParser {
 
   // Tracking nested depth in epcisBody/eventList
   private int epcisBodyDepth = 0;
+
+  // queryName/subscriptionID of an EPCISQueryDocument, read from epcisBody.queryResults and handed
+  // on with the header. queryResultsDepth is the epcisBodyDepth of the queryResults object, 0 when
+  // outside of it.
+  private ObjectNode queryResults;
+  private int queryResultsDepth = 0;
   private int eventListArrayDepth = 0;
 
   /**
@@ -432,9 +438,15 @@ public class AsyncObjectNodeParser {
 
       case START_OBJECT:
         epcisBodyDepth++;
+        if (QUERY_RESULTS_IN_CAMEL_CASE.equals(currentFieldName)) {
+          queryResultsDepth = epcisBodyDepth;
+        }
         break;
 
       case END_OBJECT:
+        if (epcisBodyDepth == queryResultsDepth) {
+          queryResultsDepth = 0;
+        }
         epcisBodyDepth--;
         if (epcisBodyDepth <= 0) {
           // epcisBody closed, back to header level
@@ -442,8 +454,20 @@ public class AsyncObjectNodeParser {
         }
         break;
 
+      case VALUE_STRING:
+        // queryName and subscriptionID sit next to resultsBody; keep them for the header
+        if (queryResultsDepth > 0
+            && epcisBodyDepth == queryResultsDepth
+            && (QUERY_NAME.equals(currentFieldName) || SUBSCRIPTION_ID.equals(currentFieldName))) {
+          if (queryResults == null) {
+            queryResults = NODE_FACTORY.objectNode();
+          }
+          queryResults.put(currentFieldName, parser.getText());
+        }
+        break;
+
       default:
-        // Skip scalar values
+        // Skip other scalar values
         break;
     }
   }
@@ -770,13 +794,23 @@ public class AsyncObjectNodeParser {
 
   /**
    * Emits the header node with epcisBody placeholder at the end.
+   *
+   * <p>The placeholder is {@code null}, except for an EPCISQueryDocument whose queryResults carry a
+   * {@code queryName} or {@code subscriptionID} ahead of the first event: then it is
+   * {@code {"queryResults": {"queryName": ..., "subscriptionID": ...}}}, the place the document has
+   * them, without resultsBody. Values that follow the events in the document come too late for
+   * a streamed header and are not included.
    */
   private void emitHeader() {
     // Move epcisBody to the end if present
     if (header.has(EPCIS_BODY_IN_CAMEL_CASE)) {
       header.remove(EPCIS_BODY_IN_CAMEL_CASE);
     }
-    header.set(EPCIS_BODY_IN_CAMEL_CASE, NODE_FACTORY.nullNode());
+    if (queryResults != null) {
+      header.putObject(EPCIS_BODY_IN_CAMEL_CASE).set(QUERY_RESULTS_IN_CAMEL_CASE, queryResults);
+    } else {
+      header.set(EPCIS_BODY_IN_CAMEL_CASE, NODE_FACTORY.nullNode());
+    }
 
     readyNodes.add(header);
     headerEmitted = true;
@@ -793,6 +827,8 @@ public class AsyncObjectNodeParser {
     currentEvent = null;
     currentFieldName = null;
     readyNodes.clear();
+    queryResults = null;
+    queryResultsDepth = 0;
   }
 
   /**

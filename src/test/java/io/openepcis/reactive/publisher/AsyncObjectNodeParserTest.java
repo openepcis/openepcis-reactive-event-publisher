@@ -17,6 +17,7 @@ package io.openepcis.reactive.publisher;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.openepcis.constants.EPCIS;
 import java.io.IOException;
@@ -152,6 +153,49 @@ public class AsyncObjectNodeParserTest {
 
     // Should parse query response with events
     assertFalse(nodes.isEmpty());
+  }
+
+  @Test
+  public void testQueryDocumentHeaderCarriesQueryNameAndSubscriptionID() throws IOException {
+    AsyncObjectNodeParser parser = new AsyncObjectNodeParser();
+
+    byte[] json =
+        ("{\"@context\":[\"https://ref.gs1.org/standards/epcis/epcis-context.jsonld\"],"
+                + "\"type\":\"EPCISQueryDocument\",\"schemaVersion\":\"2.0\","
+                + "\"creationDate\":\"2005-07-11T11:30:47.0Z\",\"epcisBody\":{\"queryResults\":{"
+                + "\"subscriptionID\":\"32d2aec1-a6d2-46d9-900a-24124288cce1\","
+                + "\"queryName\":\"SimpleEventQuery\",\"resultsBody\":{\"eventList\":["
+                + "{\"type\":\"ObjectEvent\",\"eventTime\":\"2021-05-27T14:00:00+01:00\","
+                + "\"eventTimeZoneOffset\":\"+01:00\",\"action\":\"OBSERVE\"}]}}}}")
+            .getBytes(StandardCharsets.UTF_8);
+    parser.feedInput(json, 0, json.length);
+    parser.endOfInput();
+
+    List<ObjectNode> nodes = drainNodes(parser);
+    assertEquals(2, nodes.size());
+    ObjectNode header = nodes.get(0);
+    assertEquals(EPCIS.EPCIS_QUERY_DOCUMENT, header.get(EPCIS.TYPE).asText());
+    // the query results metadata stays where the document has it, so the header still validates
+    JsonNode queryResults = header.path(EPCIS.EPCIS_BODY_IN_CAMEL_CASE).path(EPCIS.QUERY_RESULTS_IN_CAMEL_CASE);
+    assertEquals("SimpleEventQuery", queryResults.path(EPCIS.QUERY_NAME).asText(null), header.toString());
+    assertEquals(
+        "32d2aec1-a6d2-46d9-900a-24124288cce1",
+        queryResults.path(EPCIS.SUBSCRIPTION_ID).asText(null),
+        header.toString());
+    assertFalse(queryResults.has(EPCIS.RESULTS_BODY_IN_CAMEL_CASE), header.toString());
+    assertEquals("ObjectEvent", nodes.get(1).get(EPCIS.TYPE).asText());
+  }
+
+  @Test
+  public void testDocumentHeaderKeepsNullBodyPlaceholder() throws IOException {
+    AsyncObjectNodeParser parser = new AsyncObjectNodeParser();
+
+    byte[] json = readResource("/object-node-publisher/OneEvent.json");
+    parser.feedInput(json, 0, json.length);
+    parser.endOfInput();
+
+    ObjectNode header = drainNodes(parser).get(0);
+    assertTrue(header.get(EPCIS.EPCIS_BODY_IN_CAMEL_CASE).isNull(), header.toString());
   }
 
   // ========== Early-eventList Detection Tests ==========
